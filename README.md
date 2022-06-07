@@ -1,24 +1,22 @@
 # rsync-go
 
 ![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)
-[![Build Status](https://travis-ci.org/itchio/rsync-go.svg?branch=master)](https://travis-ci.org/itchio/rsync-go)
-[![GoDoc](https://godoc.org/github.com/itchio/rsync-go?status.svg)](https://godoc.org/github.com/itchio/rsync-go)
+[![GoDoc](https://godoc.org/github.com/minio/rsync-go?status.svg)](https://godoc.org/github.com/minio/rsync-go)
 
 This is a pure go implementation of the rsync algorithm.
 
-This repo in particular is a fork of Daniel Teophanes's implementation
-(see the [](#Links) section for details)
+This repo in particular is a fork of Amos Wenger implementation (see the [](#Links) section for details)
 
 ### Usage
 
-Here's a simple example (without error checking):
+Here is a sample example (without error checking):
 
 ```go
 import (
   "os"
   "bytes"
 
-  "gopkg.in/itchio/go-rsync.v0"
+  "github.com/minio/rsync-go"
 )
 
 func main() {
@@ -57,11 +55,7 @@ func main() {
 }
 ```
 
-Import
-
-Creating a signature:
-
 ### Links
 
-  * original repo: <https://bitbucket.org/kardianos/rsync/>
-  * paper behind the rsync algorithm: <http://www.samba.org/~tridge/phd_thesis.pdf>
+- original repo: https://github.com/jbreiding/rsync-go
+- paper behind the rsync algorithm: <http://www.samba.org/~tridge/phd_thesis.pdf>
