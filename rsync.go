@@ -10,10 +10,13 @@ package rsync
 
 import (
 	"bytes"
-	"crypto/md5"
 	"hash"
 	"io"
+
+	"github.com/minio/highwayhash"
 )
+
+var magicHighwayHash256Key = []byte("\x4b\xe7\x34\xfa\x8e\x23\x8a\xcd\x26\x3e\x83\xe6\xbb\x96\x85\x52\x04\x0f\x93\x5d\xa3\x9f\x44\x14\x97\xe0\x9d\x13\x22\xde\x36\xa0")
 
 // If no BlockSize is specified in the RSync instance, this value is used.
 const DefaultBlockSize = 1024 * 6
@@ -58,8 +61,8 @@ type RSync struct {
 	BlockSize int
 	MaxDataOp int
 
-	// If this is nil an MD5 hash is used.
-	UniqueHasher hash.Hash
+	// If this is nil a HighwayHash is used.
+	Hasher hash.Hash
 
 	buffer []byte
 }
@@ -82,8 +85,8 @@ func (r *RSync) CreateSignature(target io.Reader, sw SignatureWriter) error {
 	if r.BlockSize <= 0 {
 		r.BlockSize = DefaultBlockSize
 	}
-	if r.UniqueHasher == nil {
-		r.UniqueHasher = md5.New()
+	if r.Hasher == nil {
+		r.Hasher, _ = highwayhash.New(magicHighwayHash256Key)
 	}
 	var err error
 	var n int
@@ -112,7 +115,11 @@ func (r *RSync) CreateSignature(target io.Reader, sw SignatureWriter) error {
 		}
 		block = buffer[:n]
 		weak, _, _ := βhash(block)
-		err = sw(BlockHash{StrongHash: r.uniqueHash(block), WeakHash: weak, Index: index})
+		err = sw(BlockHash{
+			StrongHash: r.uniqueHash(block),
+			WeakHash:   weak,
+			Index:      index,
+		})
 		if err != nil {
 			return err
 		}
@@ -126,8 +133,7 @@ func (r *RSync) ApplyDelta(alignedTarget io.Writer, target io.ReadSeeker, ops ch
 	if r.BlockSize <= 0 {
 		r.BlockSize = DefaultBlockSize
 	}
-	var err error
-	var n int
+
 	var block []byte
 
 	minBufferSize := r.BlockSize
@@ -137,16 +143,15 @@ func (r *RSync) ApplyDelta(alignedTarget io.Writer, target io.ReadSeeker, ops ch
 	buffer := r.buffer
 
 	writeBlock := func(op Operation) error {
-		target.Seek(int64(r.BlockSize*int(op.BlockIndex)), 0)
-		n, err = io.ReadAtLeast(target, buffer, r.BlockSize)
-		if err != nil {
-			if err != io.ErrUnexpectedEOF {
-				return err
-			}
+		if _, err := target.Seek(int64(r.BlockSize*int(op.BlockIndex)), 0); err != nil {
+			return err
+		}
+		n, err := io.ReadAtLeast(target, buffer, r.BlockSize)
+		if err != nil && err != io.ErrUnexpectedEOF {
+			return err
 		}
 		block = buffer[:n]
-		_, err = alignedTarget.Write(block)
-		if err != nil {
+		if _, err = alignedTarget.Write(block); err != nil {
 			return err
 		}
 		return nil
@@ -156,11 +161,10 @@ func (r *RSync) ApplyDelta(alignedTarget io.Writer, target io.ReadSeeker, ops ch
 		switch op.Type {
 		case OpBlockRange:
 			for i := op.BlockIndex; i <= op.BlockIndexEnd; i++ {
-				err = writeBlock(Operation{
+				if err := writeBlock(Operation{
 					Type:       OpBlock,
 					BlockIndex: i,
-				})
-				if err != nil {
+				}); err != nil {
 					if err == io.EOF {
 						break
 					}
@@ -168,16 +172,14 @@ func (r *RSync) ApplyDelta(alignedTarget io.Writer, target io.ReadSeeker, ops ch
 				}
 			}
 		case OpBlock:
-			err = writeBlock(op)
-			if err != nil {
+			if err := writeBlock(op); err != nil {
 				if err == io.EOF {
 					break
 				}
 				return err
 			}
 		case OpData:
-			_, err = alignedTarget.Write(op.Data)
-			if err != nil {
+			if _, err := alignedTarget.Write(op.Data); err != nil {
 				return err
 			}
 		}
@@ -197,8 +199,8 @@ func (r *RSync) CreateDelta(source io.Reader, signature []BlockHash, ops Operati
 	if r.MaxDataOp <= 0 {
 		r.MaxDataOp = DefaultMaxDataOp
 	}
-	if r.UniqueHasher == nil {
-		r.UniqueHasher = md5.New()
+	if r.Hasher == nil {
+		r.Hasher, _ = highwayhash.New(magicHighwayHash256Key)
 	}
 	minBufferSize := (r.BlockSize * 2) + (r.MaxDataOp)
 	if len(r.buffer) < minBufferSize {
@@ -381,9 +383,9 @@ func (r *RSync) CreateDelta(source io.Reader, signature []BlockHash, ops Operati
 
 // Use a more unique way to identify a set of bytes.
 func (r *RSync) uniqueHash(v []byte) []byte {
-	r.UniqueHasher.Reset()
-	r.UniqueHasher.Write(v)
-	return r.UniqueHasher.Sum(nil)
+	r.Hasher.Reset()
+	r.Hasher.Write(v)
+	return r.Hasher.Sum(nil)
 }
 
 // Searches for a given strong hash among all strong hashes in this bucket.
