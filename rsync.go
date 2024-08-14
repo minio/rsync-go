@@ -311,9 +311,6 @@ func (r *RSync) CreateDelta(source io.Reader, signature []BlockHash, ops Operati
 
 				data.head = validTo
 			}
-			if n == 0 {
-				break
-			}
 		}
 
 		// Set the hash sum window head. Must either be a block size
