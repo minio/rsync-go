@@ -1,11 +1,12 @@
-package rsync
+package rsync_test
 
 import (
 	"bytes"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"testing"
+
+	"github.com/minio/rsync-go"
 )
 
 type pair struct {
@@ -26,7 +27,12 @@ func newRandomReader(seed, size int64) io.Reader {
 func (c *content) Fill() {
 	c.Data = make([]byte, c.Len)
 	src := rand.NewSource(c.Seed)
-	c.Data, _ = ioutil.ReadAll(newRandomReader(c.Seed, int64(c.Len)))
+
+	var err error
+	c.Data, err = io.ReadAll(newRandomReader(c.Seed, int64(c.Len)))
+	if err != nil {
+		panic(err)
+	}
 
 	if c.Alter > 0 {
 		r := rand.New(src)
@@ -88,8 +94,8 @@ func Test_GenData(t *testing.T) {
 			Description: "Source and target both smaller then a block size.",
 		},
 	}
-	rs := &RSync{}
-	rsDelta := &RSync{}
+	rs := &rsync.RSync{}
+	rsDelta := &rsync.RSync{}
 	for _, p := range pairs {
 		(&p.Source).Fill()
 		(&p.Target).Fill()
@@ -97,25 +103,25 @@ func Test_GenData(t *testing.T) {
 		sourceBuffer := bytes.NewReader(p.Source.Data)
 		targetBuffer := bytes.NewReader(p.Target.Data)
 
-		sig := make([]BlockHash, 0, 10)
-		err := rs.CreateSignature(targetBuffer, func(bl BlockHash) error {
+		sig := make([]rsync.BlockHash, 0, 10)
+		err := rs.CreateSignature(targetBuffer, func(bl rsync.BlockHash) error {
 			sig = append(sig, bl)
 			return nil
 		})
 		if err != nil {
 			t.Errorf("Failed to create signature: %s", err)
 		}
-		opsOut := make(chan Operation)
+		opsOut := make(chan rsync.Operation)
 		go func() {
 			var blockCt, blockRangeCt, dataCt, bytes int
 			defer close(opsOut)
-			err := rsDelta.CreateDelta(sourceBuffer, sig, func(op Operation) error {
+			err := rsDelta.CreateDelta(sourceBuffer, sig, func(op rsync.Operation) error {
 				switch op.Type {
-				case OpBlockRange:
+				case rsync.OpBlockRange:
 					blockRangeCt++
-				case OpBlock:
+				case rsync.OpBlock:
 					blockCt++
-				case OpData:
+				case rsync.OpData:
 					// Copy data buffer so it may be reused in internal buffer.
 					b := make([]byte, len(op.Data))
 					copy(b, op.Data)

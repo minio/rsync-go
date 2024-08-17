@@ -3,7 +3,7 @@ package rsync_test
 import (
 	"fmt"
 	"io"
-	"os"
+	"log"
 	"strings"
 
 	"github.com/minio/rsync-go"
@@ -21,7 +21,10 @@ func ExampleRsync() {
 		sig = append(sig, bl)
 		return nil
 	}
-	rs.CreateSignature(oldReader, writeSignature)
+	err := rs.CreateSignature(oldReader, writeSignature)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	var currentReader io.Reader
 	currentReader = strings.NewReader("I am the new content")
@@ -34,13 +37,22 @@ func ExampleRsync() {
 
 	go func() {
 		defer close(opsOut)
-		rs.CreateDelta(currentReader, sig, writeOperation)
+		err := rs.CreateDelta(currentReader, sig, writeOperation)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}()
 
 	var newWriter strings.Builder
-	oldReader.Seek(0, os.SEEK_SET)
+	_, err = oldReader.Seek(0, io.SeekStart)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	rs.ApplyDelta(&newWriter, oldReader, opsOut)
+	err = rs.ApplyDelta(&newWriter, oldReader, opsOut)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	fmt.Println(newWriter.String())
 	// Output: I am the new content

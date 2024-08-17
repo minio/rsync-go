@@ -3,15 +3,17 @@
 // Algorithm found at: http://www.samba.org/~tridge/phd_thesis.pdf
 //
 // Definitions
-//   Source: The final content.
-//   Target: The content to be made into final content.
-//   Signature: The sequence of hashes used to identify the content.
+//
+//	Source: The final content.
+//	Target: The content to be made into final content.
+//	Signature: The sequence of hashes used to identify the content.
 package rsync
 
 import (
 	"bytes"
 	"hash"
 	"io"
+	"sync"
 
 	"github.com/minio/highwayhash"
 )
@@ -64,15 +66,34 @@ type RSync struct {
 	// If this is nil a HighwayHash is used.
 	Hasher hash.Hash
 
+	once   sync.Once
 	buffer []byte
+}
+
+func (r *RSync) initialize() {
+	if r.BlockSize <= 0 {
+		r.BlockSize = DefaultBlockSize
+	}
+
+	if r.MaxDataOp <= 0 {
+		r.MaxDataOp = DefaultMaxDataOp
+	}
+
+	if r.Hasher == nil {
+		r.Hasher, _ = highwayhash.New(magicHighwayHash256Key)
+	}
+
+	minBufferSize := (r.BlockSize * 2) + (r.MaxDataOp)
+	if len(r.buffer) < minBufferSize {
+		r.buffer = make([]byte, minBufferSize)
+	}
 }
 
 // If the target length is known the number of hashes in the
 // signature can be determined.
 func (r *RSync) BlockHashCount(targetLength int) (count int) {
-	if r.BlockSize <= 0 {
-		r.BlockSize = DefaultBlockSize
-	}
+	r.once.Do(r.initialize)
+
 	count = (targetLength / r.BlockSize)
 	if targetLength%r.BlockSize != 0 {
 		count++
@@ -82,19 +103,10 @@ func (r *RSync) BlockHashCount(targetLength int) (count int) {
 
 // Calculate the signature of target.
 func (r *RSync) CreateSignature(target io.Reader, sw SignatureWriter) error {
-	if r.BlockSize <= 0 {
-		r.BlockSize = DefaultBlockSize
-	}
-	if r.Hasher == nil {
-		r.Hasher, _ = highwayhash.New(magicHighwayHash256Key)
-	}
+	r.once.Do(r.initialize)
+
 	var err error
 	var n int
-
-	minBufferSize := r.BlockSize
-	if len(r.buffer) < minBufferSize {
-		r.buffer = make([]byte, minBufferSize)
-	}
 	buffer := r.buffer
 
 	var block []byte
@@ -130,16 +142,9 @@ func (r *RSync) CreateSignature(target io.Reader, sw SignatureWriter) error {
 
 // Apply the difference to the target.
 func (r *RSync) ApplyDelta(alignedTarget io.Writer, target io.ReadSeeker, ops chan Operation) error {
-	if r.BlockSize <= 0 {
-		r.BlockSize = DefaultBlockSize
-	}
+	r.once.Do(r.initialize)
 
 	var block []byte
-
-	minBufferSize := r.BlockSize
-	if len(r.buffer) < minBufferSize {
-		r.buffer = make([]byte, minBufferSize)
-	}
 	buffer := r.buffer
 
 	writeBlock := func(op Operation) error {
@@ -193,19 +198,8 @@ func (r *RSync) ApplyDelta(alignedTarget io.Writer, target io.ReadSeeker, ops ch
 // data is reused. The sourceSum create a complete hash sum of the source if
 // present.
 func (r *RSync) CreateDelta(source io.Reader, signature []BlockHash, ops OperationWriter) (err error) {
-	if r.BlockSize <= 0 {
-		r.BlockSize = DefaultBlockSize
-	}
-	if r.MaxDataOp <= 0 {
-		r.MaxDataOp = DefaultMaxDataOp
-	}
-	if r.Hasher == nil {
-		r.Hasher, _ = highwayhash.New(magicHighwayHash256Key)
-	}
-	minBufferSize := (r.BlockSize * 2) + (r.MaxDataOp)
-	if len(r.buffer) < minBufferSize {
-		r.buffer = make([]byte, minBufferSize)
-	}
+	r.once.Do(r.initialize)
+
 	buffer := r.buffer
 
 	// A single β hashes may correlate with a many unique hashes.
@@ -317,9 +311,6 @@ func (r *RSync) CreateDelta(source io.Reader, signature []BlockHash, ops Operati
 
 				data.head = validTo
 			}
-			if n == 0 {
-				break
-			}
 		}
 
 		// Set the hash sum window head. Must either be a block size
@@ -372,7 +363,7 @@ func (r *RSync) CreateDelta(source io.Reader, signature []BlockHash, ops Operati
 			if !lastRun && rolling {
 				αPop = uint32(buffer[sum.tail])
 			}
-			sum.tail += 1
+			sum.tail++
 
 			// May trigger "data wrap".
 			data.head = sum.tail
